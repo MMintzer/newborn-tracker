@@ -1,0 +1,7 @@
+node_modules/
+data.db
+.tessl/
+.mcp.json
+tessl.json
+*.log
+.env
