@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Newborn Tracker</title>
+  <style>
+    :root { --fg: #222; --muted: #667; --line: #dde; --accent: #3b6; --bg: #f7f8fa; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: var(--fg); background: var(--bg); margin: 0;
+      line-height: 1.45;
+    }
+    main { max-width: 760px; margin: 0 auto; padding: 1.5rem; }
+    h1 { margin: 0 0 1rem; font-size: 1.5rem; }
+    h2 { font-size: 1.1rem; margin: 0 0 .75rem; }
+    section {
+      background: #fff; border: 1px solid var(--line); border-radius: 8px;
+      padding: 1.25rem; margin-bottom: 1.25rem;
+    }
+    label { display: block; font-size: .85rem; color: var(--muted); margin: .6rem 0 .2rem; }
+    input, select, button {
+      font: inherit; padding: .45rem .6rem; border: 1px solid var(--line);
+      border-radius: 6px; background: #fff; width: 100%;
+    }
+    button {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+      cursor: pointer; width: auto; margin-top: 1rem; padding: .5rem 1rem;
+    }
+    button:hover { filter: brightness(1.05); }
+    .row { display: flex; gap: .75rem; flex-wrap: wrap; }
+    .row > div { flex: 1 1 160px; }
+    .hint { font-size: .8rem; color: var(--muted); margin-top: .3rem; }
+    .msg { margin-top: .9rem; padding: .55rem .7rem; border-radius: 6px; font-size: .9rem; display: none; }
+    .msg.ok { display: block; background: #eaf7ef; color: #1c7a42; border: 1px solid #bfe6cd; }
+    .msg.err { display: block; background: #fdecec; color: #a32626; border: 1px solid #f3c4c4; }
+    .msg ul { margin: .3rem 0 0; padding-left: 1.2rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { text-align: left; padding: .45rem .5rem; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 600; }
+    code { font-size: .82rem; color: var(--muted); }
+    .empty { color: var(--muted); font-style: italic; }
+    .privacy { font-size: .8rem; color: var(--muted); margin-top: .6rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Newborn Tracker</h1>
+
+  <!-- 1. Baby: create one (to get an id) or paste an existing id ------------ -->
+  <section>
+    <h2>Baby</h2>
+    <label for="babyId">Active baby ID</label>
+    <input id="babyId" placeholder="paste an existing baby ID, or create one below" />
+    <p class="hint">All actions below use this ID.</p>
+
+    <div class="row" style="margin-top: 1rem;">
+      <div>
+        <label for="newBabyName">Name</label>
+        <input id="newBabyName" placeholder="e.g. Robin" />
+      </div>
+      <div>
+        <label for="newBabyBirthdate">Birthdate</label>
+        <input id="newBabyBirthdate" type="date" />
+      </div>
+    </div>
+    <button id="createBabyBtn" type="button">Create baby</button>
+    <div id="babyMsg" class="msg"></div>
+  </section>
+
+  <!-- 2. Create an event --------------------------------------------------- -->
+  <section>
+    <h2>Log an event</h2>
+    <label for="eventType">Event type</label>
+    <select id="eventType">
+      <option value="diaper">Diaper</option>
+      <option value="feeding">Feeding</option>
+      <option value="sleep">Sleep</option>
+      <option value="weight">Weight</option>
+    </select>
+
+    <div id="detailFields"></div>
+
+    <button id="createEventBtn" type="button">Log event</button>
+    <div id="eventMsg" class="msg"></div>
+  </section>
+
+  <!-- 3. List events ------------------------------------------------------- -->
+  <section>
+    <h2>Events</h2>
+    <button id="loadEventsBtn" type="button" style="margin-top:0;">Load events</button>
+    <div id="listMsg" class="msg"></div>
+    <div id="eventList"></div>
+    <p class="privacy">For privacy, event details (amounts, kinds, weights, notes)
+      are intentionally not shown here — only event type, time, and IDs.</p>
+  </section>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const api = (path, opts) => fetch(path, opts).then(async (r) => ({ ok: r.ok, body: await r.json() }));
+
+  function showMsg(el, kind, html) {
+    el.className = 'msg ' + kind;
+    el.innerHTML = html;
+  }
+
+  // Render a validation error envelope: { message, fields?: [{field, message}] }
+  function errorHtml(error) {
+    let html = error && error.message ? error.message : 'Request failed';
+    if (error && Array.isArray(error.fields) && error.fields.length) {
+      html += '<ul>' + error.fields
+        .map((f) => `<li><code>${f.field}</code>: ${f.message}</li>`)
+        .join('') + '</ul>';
+    }
+    return html;
+  }
+
+  // --- Per-type detail field definitions, matching src/schemas.js ----------
+  const DETAIL_FIELDS = {
+    diaper: `
+      <label for="d_kind">Kind</label>
+      <select id="d_kind">
+        <option value="wet">wet</option>
+        <option value="dirty">dirty</option>
+        <option value="both">both</option>
+      </select>`,
+    feeding: `
+      <label for="d_method">Method</label>
+      <select id="d_method">
+        <option value="breast">breast</option>
+        <option value="bottle">bottle</option>
+      </select>
+      <div class="row">
+        <div>
+          <label for="d_amountMl">Amount (ml, optional)</label>
+          <input id="d_amountMl" type="number" min="0" step="any" />
+        </div>
+        <div>
+          <label for="d_durationMin">Duration (min, optional)</label>
+          <input id="d_durationMin" type="number" min="0" step="any" />
+        </div>
+      </div>`,
+    sleep: `
+      <div class="row">
+        <div>
+          <label for="d_startedAt">Started at</label>
+          <input id="d_startedAt" type="datetime-local" />
+        </div>
+        <div>
+          <label for="d_endedAt">Ended at</label>
+          <input id="d_endedAt" type="datetime-local" />
+        </div>
+      </div>`,
+    weight: `
+      <label for="d_kg">Weight (kg)</label>
+      <input id="d_kg" type="number" min="0" step="any" />`,
+  };
+
+  function renderDetailFields() {
+    $('detailFields').innerHTML = DETAIL_FIELDS[$('eventType').value];
+  }
+
+  // Convert a datetime-local value to an ISO-8601 UTC timestamp (schema requires it).
+  function toIso(value) {
+    if (!value) return undefined;
+    const d = new Date(value);
+    return isNaN(d) ? undefined : d.toISOString();
+  }
+
+  // Build the `details` object for the selected type from the form inputs.
+  function collectDetails(type) {
+    if (type === 'diaper') return { kind: $('d_kind').value };
+    if (type === 'feeding') {
+      const details = { method: $('d_method').value };
+      if ($('d_amountMl').value !== '') details.amountMl = Number($('d_amountMl').value);
+      if ($('d_durationMin').value !== '') details.durationMin = Number($('d_durationMin').value);
+      return details;
+    }
+    if (type === 'sleep') {
+      return { startedAt: toIso($('d_startedAt').value), endedAt: toIso($('d_endedAt').value) };
+    }
+    if (type === 'weight') return { kg: Number($('d_kg').value) };
+    return {};
+  }
+
+  function requireBabyId(msgEl) {
+    const id = $('babyId').value.trim();
+    if (!id) {
+      showMsg(msgEl, 'err', 'Set an active baby ID first.');
+      return null;
+    }
+    return id;
+  }
+
+  // --- Create baby ---------------------------------------------------------
+  $('createBabyBtn').addEventListener('click', async () => {
+    const msg = $('babyMsg');
+    const body = { name: $('newBabyName').value, birthdate: $('newBabyBirthdate').value };
+    try {
+      const { ok, body: res } = await api('/babies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!ok) return showMsg(msg, 'err', errorHtml(res.error));
+      $('babyId').value = res.data.id;
+      showMsg(msg, 'ok', `Created <strong>${res.data.name}</strong> — active baby ID set to <code>${res.data.id}</code>.`);
+    } catch (e) {
+      showMsg(msg, 'err', 'Network error: ' + e.message);
+    }
+  });
+
+  // --- Create event --------------------------------------------------------
+  $('createEventBtn').addEventListener('click', async () => {
+    const msg = $('eventMsg');
+    const babyId = requireBabyId(msg);
+    if (!babyId) return;
+
+    const type = $('eventType').value;
+    const payload = { type, details: collectDetails(type) };
+    try {
+      const { ok, body: res } = await api(`/babies/${encodeURIComponent(babyId)}/events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!ok) return showMsg(msg, 'err', errorHtml(res.error));
+      showMsg(msg, 'ok', `Logged <strong>${res.data.type}</strong> event <code>${res.data.id}</code> at ${res.data.createdAt}.`);
+    } catch (e) {
+      showMsg(msg, 'err', 'Network error: ' + e.message);
+    }
+  });
+
+  // --- List events (non-sensitive fields only) -----------------------------
+  $('loadEventsBtn').addEventListener('click', async () => {
+    const msg = $('listMsg');
+    const babyId = requireBabyId(msg);
+    if (!babyId) return;
+    msg.className = 'msg';
+
+    try {
+      const { ok, body: res } = await api(`/babies/${encodeURIComponent(babyId)}/events`);
+      if (!ok) return showMsg(msg, 'err', errorHtml(res.error));
+      renderEvents(res.data);
+    } catch (e) {
+      showMsg(msg, 'err', 'Network error: ' + e.message);
+    }
+  });
+
+  function renderEvents(events) {
+    const container = $('eventList');
+    if (!events.length) {
+      container.innerHTML = '<p class="empty">No events logged for this baby yet.</p>';
+      return;
+    }
+    // Intentionally only render non-sensitive fields — never `details`.
+    const rows = events.map((e) => `
+      <tr>
+        <td>${e.type}</td>
+        <td>${e.createdAt}</td>
+        <td><code>${e.id}</code></td>
+        <td><code>${e.babyId}</code></td>
+      </tr>`).join('');
+    container.innerHTML = `
+      <table>
+        <thead>
+          <tr><th>Type</th><th>Time</th><th>Event ID</th><th>Baby ID</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  $('eventType').addEventListener('change', renderDetailFields);
+  renderDetailFields();
+</script>
+</body>
+</html>

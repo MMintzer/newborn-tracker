@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const path = require('path');
 const express = require('express');
 
 const db = require('./db');
@@ -37,6 +38,9 @@ function rowToEvent(row) {
 
 const app = express();
 app.use(express.json());
+
+// Serve the static web UI (vanilla HTML/CSS/JS) from src/public.
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/health', (_req, res) => sendData(res, { status: 'ok' }));
 
@@ -76,6 +80,18 @@ app.post('/babies/:id/events', (req, res) => {
   db.prepare(
     'INSERT INTO events (id, babyId, type, createdAt, details) VALUES (?, ?, ?, ?, ?)'
   ).run(event.id, event.babyId, event.type, event.createdAt, JSON.stringify(event.details));
+
+  // Log that an event was created. Only non-sensitive identifiers — never the
+  // `details` payload, which is sensitive infant health data.
+  console.info(
+    JSON.stringify({
+      msg: 'event created',
+      eventId: event.id,
+      babyId: event.babyId,
+      type: event.type,
+      status: 201,
+    })
+  );
 
   return sendData(res, event, 201);
 });
