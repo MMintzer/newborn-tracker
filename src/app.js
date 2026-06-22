@@ -81,18 +81,6 @@ app.post('/babies/:id/events', (req, res) => {
     'INSERT INTO events (id, babyId, type, createdAt, details) VALUES (?, ?, ?, ?, ?)'
   ).run(event.id, event.babyId, event.type, event.createdAt, JSON.stringify(event.details));
 
-  // Log that an event was created. Only non-sensitive identifiers — never the
-  // `details` payload, which is sensitive infant health data.
-  console.info(
-    JSON.stringify({
-      msg: 'event created',
-      eventId: event.id,
-      babyId: event.babyId,
-      type: event.type,
-      status: 201,
-    })
-  );
-
   return sendData(res, event, 201);
 });
 
